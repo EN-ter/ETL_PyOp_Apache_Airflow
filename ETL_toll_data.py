@@ -1,127 +1,157 @@
 from datetime import timedelta
 from airflow.models import DAG
-from airflow.operators.bash_operator import BashOperator
+from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
 import requests
 import tarfile
+import csv
+import shutil
 
-#DAG arguments
-default_args = {
-'owner': 'owner1',
-'start_date': days_ago(0),
-'email': ['nussb003@csusm.edu'],
-'retries': 1,
-'retry_delay': timedelta(minutes=5),
-}
-
-#define the DAG(Directed Acyclic Graph)
-dag = DAG('ETL_toll_data',
-   default_args=default_args,
-   description='Apache Airflow Final Assignment PyOp',
-   schedule_interval=timedelta(days=1),
-)
-
+# Define the path for the input and output files
 source_url = 'https://cf-courses-data.s3.us.cloud-object-storage.appdomain.cloud/IBM-DB0250EN-SkillsNetwork/labs/Final%20Assignment/tolldata.tgz'
 destination_path = '/home/project/airflow/dags/python_etl/staging'
 
+# Function to download the dataset
 def download_dataset():
     response = requests.get(source_url, stream=True)
     if response.status_code == 200:
-        with open(destination_path, 'wb') as f:
-            f.write(response.content)
-        print("Download completed successfully.")
+        with open(f"{destination_path}/tolldata.tgz", 'wb') as f:
+            f.write(response.raw.read())
     else:
-        print("Failed to download the file.")
+        print("Failed to download the file")
 
+# Function to untar the dataset
 def untar_dataset():
-    with tarfile.open(destination_path, "r:gz") as tar:
-        tar.extractall(path=extract_path)
-    print("Extraction completed successfully.")
+    with tarfile.open(f"{destination_path}/tolldata.tgz", "r:gz") as tar:
+        tar.extractall(path=destination_path)
 
-# define tasks
-# task1-extract toll data (Rowid, Timestamp, vehicle number, vehicle type) from csv
-def extract_data_from_csv ():
-    global destination_path
-    input_file = destination_path + '/vehicle-data.csv'
-    extracted_file = destination_path +'/csv_data.csv'
-    # Read the contents of the file into a string
-    with open(input_file, 'r') as infile, open(extracted_file, 'w') as outfile:
-    #create headers
-        outfile.write("Rowid,Timestamp,Anonymized_Vehicle_Number,Vehicle_Type\n")
-        next(infile)
-        for line in infile:    
-            fields = line.split(',')    
-            if len(fields) >= 6 : 
-                field_1 = fields[0] 
-                field_2 = fields[1] 
-                field_3 = fields[2]    
-                field_4 = fields[3]       
-                outfile.write(field_1 + "," + field_2 + "," + field_3 + field_4 + "\n")
+# Function to extract data from CSV
+def extract_data_from_csv():
+    input_file = f"{destination_path}/vehicle-data.csv"
+    output_file = f"{destination_path}/csv_data.csv"
+    with open(input_file, 'r') as infile, open(output_file, 'w') as outfile:
 
-# task3-extract (number of axles, tollplaza id, tollplaza code) from tsv
-def extract_data_from_tsv():
-    global destination_path
-    input_file = destination_path + '/tollplaza-data.csv'
-    extracted_file = destination_path +'/tsv_data.csv'
-    # Read the contents of the file into a string
-    with open(input_file, 'r') as infile, open(extracted_file, 'w') as outfile:
-        #create headers
-        outfile.write("Number_of_Axles,Tollplaza_id,Tollplaza_Code\n")
-        next(infile)
-        for line in infile:    
-            fields = line.split('\t')    
-            if len(fields) >= 7 : 
-                field_1 = fields[4] 
-                field_2 = fields[5] 
-                field_3 = fields[6]        
-                outfile.write(field_1 + "," + field_2 + "," + field_3 + "\n")
-
-# task4-extract (payment code, vehicle code) using fixed width from csv
-def extract_data_from_fixed_width():
-    global destination_path
-    input_file = destination_path + '/payment-data.csv'
-    extracted_file = destination_path +'/fixed_width_data.csv'
-    # Read the contents of the file into a string
-    with open(input_file, 'r') as infile, open(extracted_file, 'w') as outfile:
-        #create headers
-        outfile.write("Payment_Type,Vehicle_Code\n")
-        next(infile)
-        for line in infile:    
-            fields = line[59:67].split(' ')    
-            if len(fields) >= 2 :   
-                field_1 = fields[0] 
-                field_2 = fields[1]         
-                outfile.write(field_1 + "," + field_2 + "\n")
-
-# task5-consolidate data into one csv
-def consolidate_data():
-    global destination_path
-    input_file1 = destination_path + '/csv_data.csv'
-    input_file2 = destination_path + '/tsv_data.csv'
-    input_file3 = destination_path + '/fixed_width_data.csv'
-    extracted_file = destination_path +'/extracted_data.csv'
-    # Read the contents of the file into a string
-    with open(input_file1, 'r') as infile1, open(input_file2, 'r') as infile2, \
-        open(input_file3, 'r') as infile3, open(extracted_file, 'w') as outfile:
-
-        for line1, line2, line3 in zip(infile1, infile2, infile3):      
-           field_1_4 = line1.split(',')
-           field_5_7 = line2.split(',')
-           field_8_9 = line3.split(',')       
-           outfile.write(','.join(field_1_4 + field_5_7 + field_8_9) + '\n')
-
-# task6-transform (uppercase)
-def transform_data():
-    global destination_path    
-    input_file = destination_path + '/extracted_data.csv' 
-    extracted_file = destination_path + 'tansformed_data.csv'
-    with open(input_file, 'r') as infile, open(extracted_file, 'w') as outfile:    
+        writer = csv.writer(outfile)
+        writer.writerow(['Rowid', 'Timestamp', 'Anonymized Vehicle number', 'Vehicle type'])
         for line in infile:
-            field_1_3 = line.split(',')[0:2]
-            field_4 = line.split(',')[3].upper()
-            field_5_8 = line.split(',')[4:7]
-            outfile.write(','.join(field_1_3 + field_4 + field_5_8) + '\n')
+            row = line.split(',')
+            writer.writerow([row[0], row[1], row[2], row[3]])
 
+# Function to extract data from TSV
+def extract_data_from_tsv():
+    input_file = f"{destination_path}/tollplaza-data.tsv"
+    output_file = f"{destination_path}/tsv_data.csv"
+    with open(input_file, 'r') as infile, open(output_file, 'w') as outfile:
+        writer = csv.writer(outfile)
+        writer.writerow(['Number of axles', 'Tollplaza id', 'Tollplaza code'])
+        for line in infile:
+            row = line.split('\t')
+            writer.writerow([row[0], row[1], row[2]])
 
-# task pipeline
-untar_dataset >> extract_data_from_csv >> extract_data_from_tsv >> extract_data_from_fixed_width >> consolidate_data >> transform_data
+# Function to extract data from fixed width file
+def extract_data_from_fixed_width():
+    input_file = f"{destination_path}/payment-data.txt"
+    output_file = f"{destination_path}/fixed_width_data.csv"
+    with open(input_file, 'r') as infile, open(output_file, 'w') as outfile:
+        writer = csv.writer(outfile)
+        writer.writerow(['Type of Payment code', 'Vehicle Code'])
+        for line in infile:
+            writer.writerow([line[0:6].strip(), line[6:12].strip()])
+
+# Function to consolidate data
+def consolidate_data():
+    csv_file = f"{destination_path}/csv_data.csv"
+    tsv_file = f"{destination_path}/tsv_data.csv"
+    fixed_width_file = f"{destination_path}/fixed_width_data.csv"
+    output_file = f"{destination_path}/extracted_data.csv"
+
+    with open(csv_file, 'r') as csv_in, open(tsv_file, 'r') as tsv_in, open(fixed_width_file, 'r') as fixed_in, open(output_file, 'w') as out_file:
+        csv_reader = csv.reader(csv_in)
+        tsv_reader = csv.reader(tsv_in)
+        fixed_reader = csv.reader(fixed_in)
+        writer = csv.writer(out_file)
+
+        writer.writerow(['Rowid', 'Timestamp', 'Anonymized Vehicle number', 'Vehicle type', 'Number of axles', 'Tollplaza id', 'Tollplaza code', 'Type of Payment code', 'Vehicle Code'])
+        next(csv_reader)
+        next(tsv_reader)
+        next(fixed_reader)
+
+        for csv_row, tsv_row, fixed_row in zip(csv_reader, tsv_reader, fixed_reader):
+            writer.writerow(csv_row + tsv_row + fixed_row)
+
+# Function to transform data
+def transform_data():
+    input_file = f"{destination_path}/extracted_data.csv"
+    output_file = f"{destination_path}/transformed_data.csv"
+
+    with open(input_file, 'r') as infile, open(output_file, 'w') as outfile:
+        reader = csv.DictReader(infile)
+        writer = csv.DictWriter(outfile, fieldnames=reader.fieldnames)
+        writer.writeheader()
+
+        for row in reader:
+            row['Vehicle type'] = row['Vehicle type'].upper()
+            writer.writerow(row)
+
+# Default arguments for the DAG
+default_args = {
+    'owner': 'Your name',
+    'start_date': days_ago(0),
+    'email': ['your email'],
+    'retries': 1,
+    'retry_delay': timedelta(minutes=5),
+}
+
+# Define the DAG
+dag = DAG(
+    'ETL_toll_data',
+    default_args=default_args,
+    description='Apache Airflow Final Assignment',
+    schedule_interval=timedelta(days=1),
+)
+
+# Define the tasks
+download_task = PythonOperator(
+    task_id='download_dataset',
+    python_callable=download_dataset,
+    dag=dag,
+)
+
+untar_task = PythonOperator(
+    task_id='untar_dataset',
+    python_callable=untar_dataset,
+    dag=dag,
+)
+
+extract_csv_task = PythonOperator(
+    task_id='extract_data_from_csv',
+    python_callable=extract_data_from_csv,
+    dag=dag,
+)
+
+extract_tsv_task = PythonOperator(
+    task_id='extract_data_from_tsv',
+    python_callable=extract_data_from_tsv,
+    dag=dag,
+)
+
+extract_fixed_width_task = PythonOperator(
+    task_id='extract_data_from_fixed_width',
+    python_callable=extract_data_from_fixed_width,
+    dag=dag,
+)
+
+consolidate_task = PythonOperator(
+    task_id='consolidate_data',
+    python_callable=consolidate_data,
+    dag=dag,
+)
+
+transform_task = PythonOperator(
+    task_id='transform_data',
+    python_callable=transform_data,
+    dag=dag,
+)
+
+# Set the task dependencies
+download_task >> untar_task >> [extract_csv_task, extract_tsv_task, extract_fixed_width_task] >> consolidate_task >> transform_task
